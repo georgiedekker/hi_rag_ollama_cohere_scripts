@@ -1,0 +1,57 @@
+default_provider: ${PROVIDER:-cohere}
+ollama:
+  model: ${OPENAI_MODEL_NAME:-glm4}
+  base_url: ${OLLAMA_BASE_URL:-http://localhost:11434}
+  api_key: ${OPENAI_API_KEY:-ollama}
+glm:
+  model: ${GLM_MODEL:-glm3-mini}
+  api_key: ${OPENAI_API_KEY:-ollama}
+  base_url: ${OPENAI_API_BASE:-http://localhost:11434/v1}
+deepseek:
+  model: ${DEEPSEEK_COMPLETION_MODEL:-deepseek-chat}
+  api_key: ${DEEPSEEK_API_KEY}
+  base_url: https://api.deepseek.com
+openai:
+  api_key: ${OPENAI_API_KEY}
+  base_url: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+  model: ${OPENAI_MODEL_NAME:-gpt-4-turbo}
+cohere:
+  api_key: ${COHERE_API_KEY}
+  base_url: https://api.cohere.com/v2
+  embedding_model: ${COHERE_EMBEDDING_MODEL:-embed-english-v3.0}
+  input_type: ${COHERE_INPUT_TYPE:-search_document}
+  embedding_dim: ${COHERE_EMBEDDING_DIM:-1024}
+  max_token_size: ${COHERE_MAX_TOKEN_SIZE:-8192}
+azure:
+  api_key: ${AZURE_OPENAI_API_KEY}
+  endpoint: ${AZURE_OPENAI_ENDPOINT}
+  api_version: ${AZURE_OPENAI_API_VERSION:-2023-05-15}
+  model: ${OPENAI_MODEL_NAME:-gpt-4}
+model_params:
+  ollama_embedding_dim: ${OLLAMA_EMBEDDING_DIM:-3584}
+  glm_embedding_dim: ${GLM_EMBEDDING_DIM:-3584}
+  deepseek_embedding_dim: ${DEEPSEEK_EMBEDDING_DIM:-3072}
+  openai_embedding_dim: ${OPENAI_EMBEDDING_DIM:-1536}
+  cohere_embedding_dim: ${COHERE_EMBEDDING_DIM:-1024}
+  max_token_size: ${MAX_TOKEN_SIZE:-8192}
+hirag:
+  working_dir: ${HIRAG_WORKING_DIR:-/app/data}
+  enable_llm_cache: ${ENABLE_LLM_CACHE:-true}
+  enable_hierachical_mode: ${ENABLE_HIERARCHICAL_MODE:-true}
+  embedding_batch_num: ${EMBEDDING_BATCH_NUM:-6}
+  embedding_func_max_async: ${EMBEDDING_FUNC_MAX_ASYNC:-8}
+  enable_naive_rag: ${ENABLE_NAIVE_RAG:-true}
+neo4j:
+  url: ${NEO4J_URI:-neo4j://localhost:7687}
+  user: ${NEO4J_USER:-neo4j}
+  password: ${NEO4J_PASSWORD:-password}
+  database: ${NEO4J_DATABASE:-neo4j}
+vector_db:
+  backend: ${VECTOR_DB_BACKEND:-nanovectordb}
+chunking:
+  chunk_size: ${CHUNK_SIZE:-1200}
+  chunk_overlap: ${CHUNK_OVERLAP:-100}
+clustering:
+  algorithm: ${CLUSTERING_ALGORITHM:-leiden}
+  max_cluster_size: ${MAX_CLUSTER_SIZE:-10}
+  seed: ${CLUSTERING_SEED:-3735928559}

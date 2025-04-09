@@ -1,0 +1,19 @@
+openai==1.61.1
+tiktoken==0.7.0
+hirag @ git+https://github.com/hhy-huang/HiRAG.git
+python-dotenv==1.0.1
+hnswlib==0.7.0
+nano_vectordb==0.0.2
+neo4j==5.25.0
+numpy==1.26.4
+pandas==2.2.3
+transformers==4.47.1
+tqdm==4.66.5
+pydantic==2.10.6
+matplotlib==3.10.0
+networkx==3.3
+graspologic==3.4.1
+jsonlines==4.0.0
+pyyaml==6.0.1
+pytest==7.4.3
+pytest-asyncio==0.23.5

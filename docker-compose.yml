@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  hirag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hirag
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./.env:/app/.env:ro  # Mount .env file as read-only
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - ollama
+    networks:
+      - hirag-network
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - hirag-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Optional Neo4j container - uncomment if using Neo4j
+  # neo4j:
+  #   image: neo4j:5.9.0
+  #   container_name: neo4j
+  #   ports:
+  #     - "7474:7474"  # HTTP
+  #     - "7687:7687"  # Bolt
+  #   environment:
+  #     - NEO4J_AUTH=neo4j/password  # Change this to your password
+  #     - NEO4J_apoc_export_file_enabled=true
+  #     - NEO4J_apoc_import_file_enabled=true
+  #     - NEO4J_apoc_import_file_use__neo4j__config=true
+  #     - NEO4JLABS_PLUGINS=["apoc"]
+  #   volumes:
+  #     - neo4j_data:/data
+  #     - neo4j_logs:/logs
+  #     - neo4j_import:/var/lib/neo4j/import
+  #   networks:
+  #     - hirag-network
+
+volumes:
+  ollama_data:
+  # neo4j_data:
+  # neo4j_logs:
+  # neo4j_import:
+
+networks:
+  hirag-network:
+    driver: bridge 

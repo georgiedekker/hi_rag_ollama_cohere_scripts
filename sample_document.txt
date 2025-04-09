@@ -1,0 +1,97 @@
+# Hierarchical Retrieval Augmented Generation (HiRAG)
+
+## Introduction
+
+Hierarchical Retrieval Augmented Generation (HiRAG) represents an advanced approach to knowledge retrieval and generation that leverages hierarchical structures within knowledge graphs. Unlike traditional RAG systems that treat all knowledge uniformly, HiRAG organizes information into hierarchical layers, enabling more nuanced and contextually relevant retrieval.
+
+## Key Concepts
+
+### Hierarchical Knowledge Organization
+
+HiRAG organizes knowledge into three distinct layers:
+
+1. **Global Knowledge Layer**: Contains high-level concepts, definitions, and relationships that provide the overarching context for a domain.
+   
+2. **Bridge Knowledge Layer**: Connects global concepts to specific details, acting as a mediator between abstract knowledge and concrete instances.
+   
+3. **Local Knowledge Layer**: Stores detailed, specific information, examples, and edge cases that are essential for precise responses.
+
+### Multi-layer Graph Construction
+
+The system constructs a multi-layer knowledge graph where:
+
+- Nodes represent information chunks at different abstraction levels
+- Edges capture relationships between information both within and across layers
+- Weights reflect the relevance and strength of connections
+
+### Dynamic Retrieval Process
+
+When a query is received, HiRAG:
+
+1. Analyzes the query to determine which knowledge layers are most relevant
+2. Retrieves information from appropriate layers based on semantic similarity
+3. Integrates knowledge across layers to form a comprehensive response context
+4. Uses advanced LLM capabilities to generate coherent, accurate responses
+
+## Advantages over Traditional RAG
+
+HiRAG significantly outperforms traditional retrieval methods:
+
+- **Comprehensiveness**: By accessing multiple knowledge layers, HiRAG can provide more thorough answers that include both high-level concepts and specific details.
+  
+- **Empowerment**: The system's ability to traverse knowledge hierarchies enables it to provide more actionable and insightful information.
+  
+- **Diversity**: HiRAG incorporates varied perspectives and information types by drawing from different knowledge layers.
+  
+- **Overall Quality**: The hierarchical approach results in more coherent, contextually appropriate, and accurate responses.
+
+## Implementation
+
+A typical HiRAG implementation includes:
+
+```python
+graph_func = HiRAG(
+    working_dir="./your_work_dir",
+    enable_llm_cache=True,
+    enable_hierachical_mode=True, 
+    embedding_batch_num=6,
+    embedding_func_max_async=8,
+    enable_naive_rag=True
+)
+
+# Indexing documents
+with open("path_to_your_context.txt", "r") as f:
+    graph_func.insert(f.read())
+
+# Retrieving information
+result = graph_func.query("Your question?", param=QueryParam(mode="hi"))
+```
+
+## Evaluation Results
+
+Comparative studies show HiRAG consistently outperforming other RAG approaches:
+
+- Against NaiveRAG: 87.6% preference for HiRAG in overall quality
+- Against GraphRAG: 64.1% preference for HiRAG in overall quality
+- Against LightRAG: 65.9% preference for HiRAG in overall quality
+- Against FastGraphRAG: 99.2% preference for HiRAG in overall quality
+- Against KAG: 97.7% preference for HiRAG in overall quality
+
+## Use Cases
+
+HiRAG is particularly effective for:
+
+1. Complex question answering requiring both breadth and depth of knowledge
+2. Technical documentation navigation and synthesis
+3. Educational content generation that explains concepts at multiple levels
+4. Research assistance requiring integration of general theories and specific findings
+5. Domain-specific applications in fields like legal, medical, and scientific research
+
+## Future Directions
+
+Ongoing research in HiRAG focuses on:
+
+- Automating optimal hierarchy construction from unstructured data
+- Improving cross-layer knowledge integration
+- Enhancing real-time performance for dynamic knowledge bases
+- Developing domain-specific hierarchical knowledge structures 

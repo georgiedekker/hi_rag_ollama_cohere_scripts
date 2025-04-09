@@ -1,0 +1,1 @@
+This is a sample document about machine learning. GPT models are developed by OpenAI. Cohere is another AI company that provides embedding services.
