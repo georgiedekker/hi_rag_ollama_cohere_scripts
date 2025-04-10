@@ -8,6 +8,7 @@ import cohere
 import asyncio
 from pathlib import Path
 from typing import List, Dict, Any
+import re
 
 # Import our text sanitizer module
 try:
@@ -17,7 +18,7 @@ except ImportError:
     from hi_rag.text_sanitizer import sanitize_for_json, prepare_chunk_for_api, safe_json_loads
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 async def extract_hierarchical_entities(input_file: str, output_file: str):
@@ -79,46 +80,120 @@ async def extract_hierarchical_entities(input_file: str, output_file: str):
                     max_tokens=2000
                 )
                 
-                # Parse the response text to get entities and relationships
+                # ---- Start: JSON Parsing Logic ----
                 try:
                     # Find the JSON part in the response
                     response_text = response.text
-                    start_index = response_text.find('{')
-                    end_index = response_text.rfind('}') + 1
                     
-                    if start_index >= 0 and end_index > start_index:
-                        json_text = response_text[start_index:end_index]
-                        
-                        # Use our safe JSON parser
-                        try:
-                            result = safe_json_loads(json_text)
-                        except ValueError as e:
-                            logger.warning(f"Failed to parse JSON safely: {e}")
-                            # Fallback to regular parsing as last resort
-                            result = json.loads(json_text)
-                        
-                        # Sanitize the entities and relationships before adding them
-                        if "entities" in result:
-                            sanitized_entities = [prepare_chunk_for_api(entity) for entity in result["entities"]]
-                            all_entities.extend(sanitized_entities)
-                        if "relationships" in result:
-                            sanitized_relations = [prepare_chunk_for_api(rel) for rel in result["relationships"]]
-                            all_relations.extend(sanitized_relations)
+                    # Try more sophisticated JSON extraction
+                    # First check if we have a complete JSON response within markdown code blocks
+                    json_block_pattern = r'```(?:json)?\s*({[\s\S]*?})\s*```'
+                    code_blocks = re.findall(json_block_pattern, response_text)
+                    
+                    if code_blocks:
+                        # Try each code block
+                        for block in code_blocks:
+                            try:
+                                result = safe_json_loads(block)
+                                logger.info(f"Successfully extracted JSON from markdown code block for chunk {i+1}")
+                                
+                                # Sanitize the entities and relationships before adding them
+                                if "entities" in result:
+                                    sanitized_entities = [prepare_chunk_for_api(entity) for entity in result["entities"]]
+                                    all_entities.extend(sanitized_entities)
+                                if "relationships" in result:
+                                    sanitized_relations = [prepare_chunk_for_api(rel) for rel in result["relationships"]]
+                                    all_relations.extend(sanitized_relations)
+                                break  # Exit the loop once we've found a valid block
+                            except Exception as block_error:
+                                logger.debug(f"Failed to parse JSON from code block: {block_error}")
+                                continue
                     else:
-                        logger.warning(f"No valid JSON found in response for chunk {i+1}")
-                        
+                        # Fall back to our standard approach of finding { }
+                        start_index = response_text.find('{')
+                        end_index = response_text.rfind('}') + 1
+                    
+                        if start_index >= 0 and end_index > start_index:
+                            json_text = response_text[start_index:end_index]
+                            
+                            # Use our safe JSON parser
+                            try:
+                                result = safe_json_loads(json_text)
+                                logger.info(f"Successfully extracted JSON using standard extraction for chunk {i+1}")
+                                
+                                # Sanitize the entities and relationships before adding them
+                                if "entities" in result:
+                                    sanitized_entities = [prepare_chunk_for_api(entity) for entity in result["entities"]]
+                                    all_entities.extend(sanitized_entities)
+                                if "relationships" in result:
+                                    sanitized_relations = [prepare_chunk_for_api(rel) for rel in result["relationships"]]
+                                    all_relations.extend(sanitized_relations)
+                            except ValueError as e:
+                                logger.warning(f"Failed to parse JSON safely: {e}")
+                                raise json.JSONDecodeError(str(e), json_text, 0)  # Re-raise as JSONDecodeError to trigger recovery
+                        else:
+                            logger.warning(f"No valid JSON found in response for chunk {i+1}")
+                            # Try one more approach - search for entities and relationships arrays directly
+                            entities_pattern = r'"entities"\s*:\s*\[([\s\S]*?)\]'
+                            relationships_pattern = r'"relationships"\s*:\s*\[([\s\S]*?)\]'
+                            
+                            entities_match = re.search(entities_pattern, response_text)
+                            relationships_match = re.search(relationships_pattern, response_text)
+                            
+                            if entities_match or relationships_match:
+                                logger.info(f"Attempting to extract entities/relationships arrays directly for chunk {i+1}")
+                                result = {"entities": [], "relationships": []}
+                                
+                                # Process entities if found
+                                if entities_match:
+                                    entities_json = f'[{entities_match.group(1)}]'
+                                    try:
+                                        entities = json.loads(entities_json)
+                                        sanitized_entities = [prepare_chunk_for_api(entity) for entity in entities]
+                                        all_entities.extend(sanitized_entities)
+                                        logger.info(f"Successfully extracted {len(entities)} entities directly")
+                                    except Exception as ent_error:
+                                        logger.warning(f"Failed to parse entities array: {ent_error}")
+                                
+                                # Process relationships if found
+                                if relationships_match:
+                                    relationships_json = f'[{relationships_match.group(1)}]'
+                                    try:
+                                        relationships = json.loads(relationships_json)
+                                        sanitized_relations = [prepare_chunk_for_api(rel) for rel in relationships]
+                                        all_relations.extend(sanitized_relations)
+                                        logger.info(f"Successfully extracted {len(relationships)} relationships directly")
+                                    except Exception as rel_error:
+                                        logger.warning(f"Failed to parse relationships array: {rel_error}")
                 except json.JSONDecodeError as e:
+                    # Log the initial error and the problematic text
                     logger.error(f"Error parsing JSON from response for chunk {i+1}: {e}")
+                    logger.debug(f"Raw response text for chunk {i+1}:\\n{response_text}") # Log the full raw response
+                    # Extract the problematic JSON text again for logging (if possible)
+                    try:
+                        start_index = response_text.find('{')
+                        end_index = response_text.rfind('}') + 1
+                        if start_index >= 0 and end_index > start_index:
+                             problematic_json_text = response_text[start_index:end_index]
+                             logger.debug(f"Problematic JSON substring for chunk {i+1}:\\n{problematic_json_text}")
+                        else:
+                             logger.debug(f"Could not identify JSON block boundaries in raw text for chunk {i+1}")
+                    except Exception as log_err:
+                         logger.warning(f"Could not extract problematic JSON substring for logging: {log_err}")
+
                     # Try to recover the response by sanitizing it
                     try:
+                        logger.info(f"Attempting recovery for chunk {i+1} using sanitization...")
                         sanitized_response = sanitize_for_json(response_text)
+                        logger.debug(f"Sanitized response text for chunk {i+1}:\\n{sanitized_response}") # Log sanitized response
                         # Try to extract JSON again
                         start_index = sanitized_response.find('{')
                         end_index = sanitized_response.rfind('}') + 1
                         
                         if start_index >= 0 and end_index > start_index:
-                            json_text = sanitized_response[start_index:end_index]
-                            result = safe_json_loads(json_text)
+                            json_text_recovery = sanitized_response[start_index:end_index]
+                            logger.debug(f"JSON substring for recovery attempt in chunk {i+1}:\\n{json_text_recovery}") # Log recovery substring
+                            result = safe_json_loads(json_text_recovery) # Use the recovery substring
                             
                             # Add the recovered entities and relationships
                             if "entities" in result:
@@ -126,11 +201,19 @@ async def extract_hierarchical_entities(input_file: str, output_file: str):
                             if "relationships" in result:
                                 all_relations.extend(result["relationships"])
                             logger.info(f"Successfully recovered JSON data from chunk {i+1} after sanitization")
+                        else:
+                            logger.warning(f"Could not find JSON block boundaries in sanitized text for chunk {i+1}") # Added warning
                     except Exception as recover_error:
                         logger.error(f"Failed to recover JSON from chunk {i+1}: {recover_error}")
-                
-            except Exception as e:
-                logger.error(f"Error calling Cohere API for chunk {i+1}: {e}")
+                # ---- End: JSON Parsing Logic ----
+                 
+            except cohere.CohereError as ce: # Specific handling for Cohere API errors
+                logger.error(f"Cohere API error for chunk {i+1}: {ce}")
+                # Optionally, add retry logic here or simply continue to the next chunk
+                continue # Skip this chunk
+            except Exception as e: # Catch other potential errors during API call/response handling
+                logger.error(f"Error processing chunk {i+1} (before JSON parsing): {e}")
+                continue # Skip this chunk
         
         # Save the extracted entities and relationships
         result = {

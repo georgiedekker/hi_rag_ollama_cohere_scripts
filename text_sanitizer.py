@@ -98,7 +98,7 @@ def prepare_chunk_for_api(chunk: Dict[str, Any]) -> Dict[str, Any]:
 
 def safe_json_loads(json_str: str) -> Dict[str, Any]:
     """
-    Safely load JSON string, with error handling.
+    Safely load JSON string, with error handling and repair capabilities.
     
     Args:
         json_str: JSON string to parse
@@ -107,7 +107,7 @@ def safe_json_loads(json_str: str) -> Dict[str, Any]:
         Parsed JSON as Python dict/list
         
     Raises:
-        ValueError: If JSON cannot be parsed
+        ValueError: If JSON cannot be parsed after all repair attempts
     """
     try:
         return json.loads(json_str)
@@ -115,15 +115,126 @@ def safe_json_loads(json_str: str) -> Dict[str, Any]:
         # Try to fix common JSON errors
         logger.warning(f"JSON decode error: {str(e)}")
         
+        fixed_json = json_str
+        error_msg = str(e)
+        
         # Fix for missing commas
-        if "Expecting ',' delimiter" in str(e):
+        if "Expecting ',' delimiter" in error_msg:
             position = e.pos
             # Insert comma at the position
             fixed_json = json_str[:position] + "," + json_str[position:]
             try:
                 return json.loads(fixed_json)
             except:
-                pass
+                logger.debug(f"Failed to fix JSON by adding comma at position {position}")
+        
+        # Fix for unquoted property names
+        if "Expecting property name enclosed in double quotes" in error_msg:
+            try:
+                # Use regex to find and fix unquoted property names
+                import re
+                # Pattern matches: {word: or ,word: (unquoted property)
+                pattern = r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:'
+                replacement = r'\1"\2":'
+                fixed_json = re.sub(pattern, replacement, json_str)
                 
-        # If no fixes worked, raise the original error
-        raise ValueError(f"Could not parse JSON: {str(e)}") 
+                if fixed_json != json_str:  # Only try if changes were made
+                    logger.debug(f"Attempting to fix unquoted property names")
+                    return json.loads(fixed_json)
+            except Exception as quote_fix_error:
+                logger.debug(f"Failed to fix unquoted property names: {quote_fix_error}")
+        
+        # Try more aggressive repair for improperly nested braces
+        if "Extra data" in error_msg or "Expecting value" in error_msg or "Unterminated string" in error_msg:
+            try:
+                # Ensure properly balanced braces and quotes
+                stack = []
+                in_string = False
+                escape_next = False
+                fixed_json = ""
+                
+                for i, char in enumerate(json_str):
+                    if escape_next:
+                        escape_next = False
+                        fixed_json += char
+                        continue
+                        
+                    if char == '\\':
+                        escape_next = True
+                        fixed_json += char
+                        continue
+                        
+                    if char == '"' and not escape_next:
+                        in_string = not in_string
+                        
+                    if not in_string:
+                        if char == '{' or char == '[':
+                            stack.append(char)
+                        elif char == '}':
+                            if not stack or stack[-1] != '{':
+                                continue  # Skip this char as it's unbalanced
+                            stack.pop()
+                        elif char == ']':
+                            if not stack or stack[-1] != '[':
+                                continue  # Skip this char as it's unbalanced
+                            stack.pop()
+                    
+                    fixed_json += char
+                
+                # Close any unclosed brackets/braces
+                while stack:
+                    closing = '}' if stack[-1] == '{' else ']'
+                    fixed_json += closing
+                    stack.pop()
+                
+                logger.debug(f"Attempting more aggressive JSON repair")
+                return json.loads(fixed_json)
+            except Exception as repair_error:
+                logger.debug(f"Aggressive JSON repair failed: {repair_error}")
+        
+        # Ultimate fallback: try to extract well-formed JSON objects using regex
+        try:
+            logger.debug("Attempting to extract JSON using regex pattern matching")
+            # Look for patterns that might be valid JSON objects
+            import re
+            # Find the outermost JSON object (simplified approach)
+            open_brace = json_str.find('{')
+            if open_brace >= 0:
+                # Start from the first opening brace
+                stack = 1  # We start with one opening brace
+                for i in range(open_brace + 1, len(json_str)):
+                    if json_str[i] == '{':
+                        stack += 1
+                    elif json_str[i] == '}':
+                        stack -= 1
+                        if stack == 0:  # We've found the matching closing brace
+                            potential_json = json_str[open_brace:i+1]
+                            try:
+                                return json.loads(potential_json)
+                            except Exception as inner_error:
+                                logger.debug(f"Extracted JSON object failed to parse: {inner_error}")
+                                # Continue searching from this position
+                                open_brace = json_str.find('{', i+1)
+                                if open_brace >= 0:
+                                    i = open_brace
+                                    stack = 1
+                                else:
+                                    break
+            
+            # If no valid JSON objects found with the stack method, try a simpler approach
+            # Just look for text between { and } (may catch invalid nested structures)
+            simple_pattern = r'{[^{}]*}'
+            matches = re.findall(simple_pattern, json_str)
+            
+            if matches:
+                # Try each potential JSON object
+                for potential_json in matches:
+                    try:
+                        return json.loads(potential_json)
+                    except:
+                        continue
+        except Exception as regex_error:
+            logger.debug(f"JSON extraction fallback failed: {regex_error}")
+            
+        # If we get here, all repair attempts failed
+        raise ValueError(f"Could not parse JSON: {error_msg}") 
