@@ -55,7 +55,6 @@ def import_to_neo4j(json_file):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python import_to_neo4j.py /path/to/combined_entities.json")
-        path = "/var/folders/by/s966gs5542x02b2s1cnjvf300000gn/T/tmp.2l79keIgs7/output/combined_entities.json"
-        import_to_neo4j(path)
+        sys.exit(1) # Exit if no argument provided
     
     import_to_neo4j(sys.argv[1])

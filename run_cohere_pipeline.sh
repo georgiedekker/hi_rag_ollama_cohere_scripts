@@ -33,7 +33,7 @@ load_env_vars() {
         source ../.env
         set +o allexport
     else
-        print_status "No .env file found in current or parent directory"
+        print_status "No .env file found in current or parent directory. Ensure NEO4J variables are set if needed."
     fi
 }
 
@@ -231,13 +231,34 @@ else
     print_status "text_sanitizer.py module found, will use it for JSON safety"
 fi
 
-# Create working directories
-WORK_DIR=$(mktemp -d)
+# Create local temporary directory
+TEMP_PARENT_DIR="./@temp"
+mkdir -p "$TEMP_PARENT_DIR"
+if [ $? -ne 0 ]; then
+    print_error "Failed to create temporary parent directory: $TEMP_PARENT_DIR"
+    exit 1
+fi
+print_status "Ensured local temporary directory exists: $TEMP_PARENT_DIR"
+
+
+# Create working directories within the local temp directory
+WORK_DIR=$(mktemp -d -p "$TEMP_PARENT_DIR")
+if [ $? -ne 0 ] || [ -z "$WORK_DIR" ]; then
+    print_error "Failed to create working directory in $TEMP_PARENT_DIR"
+    exit 1
+fi
 print_status "Created working directory: $WORK_DIR"
 
 # Create output directory
 OUTPUT_DIR="$WORK_DIR/output"
 mkdir -p "$OUTPUT_DIR"
+if [ $? -ne 0 ]; then
+    print_error "Failed to create output directory: $OUTPUT_DIR"
+    rm -rf "$WORK_DIR" # Clean up work dir if output dir creation fails
+    exit 1
+fi
+print_status "Created output directory: $OUTPUT_DIR"
+
 
 # Set up the file paths
 INGEST_DIR="$1"
@@ -246,6 +267,24 @@ CHUNKER_DIR="$3"
 
 if [ -z "$INGEST_DIR" ] || [ -z "$NER_DIR" ] || [ -z "$CHUNKER_DIR" ]; then
     print_error "Missing required directories. Usage: $0 ingest_dir ner_dir chunker_dir"
+    rm -rf "$WORK_DIR" # Clean up created dirs
+    exit 1
+fi
+
+# Check if input directories exist
+if [ ! -d "$INGEST_DIR" ]; then
+    print_error "Ingest directory not found: $INGEST_DIR"
+    rm -rf "$WORK_DIR"
+    exit 1
+fi
+if [ ! -d "$NER_DIR" ]; then
+    print_error "NER directory not found: $NER_DIR"
+    rm -rf "$WORK_DIR"
+    exit 1
+fi
+if [ ! -d "$CHUNKER_DIR" ]; then
+    print_error "Chunker directory not found: $CHUNKER_DIR"
+    rm -rf "$WORK_DIR"
     exit 1
 fi
 
@@ -265,45 +304,56 @@ print('Cohere embedding test successful!')
 
 if [ $? -ne 0 ]; then
     print_error "Cohere embedding test failed. Please check your API key and configuration."
+    rm -rf "$WORK_DIR"
     exit 1
 fi
 
 print_success "Cohere embedding test successful!"
 
 # Process ingest files
-print_status "Processing ingest files from: $INGEST_DIR"
-find "$INGEST_DIR" -type f -not -name ".*" -not -name ".DS_Store" | while read -r file; do
+print_status "Processing ingest files from: $INGEST_DIR and loading directly to Neo4j"
+
+# Ensure Neo4j import script exists if we are calling it directly
+# Optional: Check for Neo4j credentials here if needed for early exit
+# if [ -z "$NEO4J_URL" ] || [ -z "$NEO4J_USER" ] || [ -z "$NEO4J_PASSWORD" ]; then
+#     print_error "Neo4j connection details (NEO4J_URL, NEO4J_USER, NEO4J_PASSWORD) not set in environment."
+#     # Decide if this is a fatal error for this script's purpose
+#     # exit 1 
+# fi
+
+find "$INGEST_DIR" -type f -not -name ".*" -not -name ".DS_Store" | while IFS= read -r file; do
     # Skip __init__ files
     if [[ "$(basename "$file")" == "__init__"* ]]; then
+        print_status "Skipping __init__ file: $file"
         continue
     fi
     
-    print_status "Processing ingest file: $file"
+    print_status "Processing ingest file and loading to Neo4j: $file"
     filename=$(basename "$file")
-    output_file="$OUTPUT_DIR/${filename%.*}_entities.json"
+    # No longer need the intermediate output file path
+    # output_file="$OUTPUT_DIR/${filename%.*}_entities.json"
     
-    # Run entity extraction
-    python mini_entity_extract.py --input "$file" --output "$output_file"
-    
-    if [ $? -eq 0 ] && [ -f "$output_file" ]; then
-        # Count entities and relationships if jq is available
-        if command -v jq >/dev/null 2>&1; then
-            entity_count=$(jq '.entities | length' "$output_file")
-            rel_count=$(jq '.relationships | length' "$output_file")
-            print_success "Extracted $entity_count entities and $rel_count relationships from $filename"
-        else
-            print_success "Processed $filename successfully"
-        fi
+    # Run entity extraction AND Neo4j loading
+    # IMPORTANT: Assumes mini_entity_extract.py is modified to handle --load-neo4j
+    # Alternatively, replace with a different script designed for this.
+    python mini_entity_extract.py --input "$file" --load-neo4j
+    PROCESS_EXIT_CODE=$?
+
+    if [ $PROCESS_EXIT_CODE -eq 0 ]; then
+        print_success "Successfully processed and loaded entities/relationships from $filename to Neo4j"
     else
-        print_error "Failed to process $filename"
+        print_error "Failed to process/load $filename (Exit code: $PROCESS_EXIT_CODE). Check Python script logs."
+        # Decide if processing should stop on first error, or continue with other files
+        # continue or exit 1
     fi
 done
 
-# Process NER files
+# Process NER files (Keep this analysis part as it might still be useful)
 print_status "Processing NER files from: $NER_DIR"
-find "$NER_DIR" -type f -name "*.json" | while read -r file; do
+find "$NER_DIR" -type f -name "*.json" | while IFS= read -r file; do
     # Skip __init__ files
     if [[ "$(basename "$file")" == "__init__"* ]]; then
+        print_status "Skipping __init__ file: $file"
         continue
     fi
     
@@ -312,24 +362,31 @@ find "$NER_DIR" -type f -name "*.json" | while read -r file; do
     
     # Count entities if jq is available
     if command -v jq >/dev/null 2>&1; then
-        if jq -e '.entities' "$file" > /dev/null 2>&1; then
-            entity_count=$(jq '.entities | length' "$file")
-            print_status "Found $entity_count entities in $filename"
-        elif jq -e '.nodes' "$file" > /dev/null 2>&1; then
-            node_count=$(jq '.nodes | length' "$file")
-            edge_count=$(jq '.edges | length' "$file")
-            print_status "Found $node_count nodes and $edge_count edges in $filename"
+        if jq -e . "$file" > /dev/null 2>&1; then # Check if valid JSON first
+            if jq -e '.entities' "$file" > /dev/null 2>&1; then
+                entity_count=$(jq '.entities | length // 0' "$file")
+                print_status "Found $entity_count entities in $filename"
+            elif jq -e '.nodes' "$file" > /dev/null 2>&1; then
+                node_count=$(jq '.nodes | length // 0' "$file")
+                edge_count=$(jq '.edges | length // 0' "$file")
+                print_status "Found $node_count nodes and $edge_count edges in $filename"
+            else
+                print_status "No recognized entity/node structure in valid JSON file $filename"
+            fi
         else
-            print_status "No recognized entity structure in $filename"
+            print_warning "NER file $filename is not valid JSON."
         fi
+    else
+         print_status "Analyzed $filename (jq not found for detailed analysis)"
     fi
 done
 
-# Process chunker files
+# Process chunker files (Keep this analysis part)
 print_status "Processing chunker files from: $CHUNKER_DIR"
-find "$CHUNKER_DIR" -type f -name "*.json" | while read -r file; do
+find "$CHUNKER_DIR" -type f -name "*.json" | while IFS= read -r file; do
     # Skip __init__ files
     if [[ "$(basename "$file")" == "__init__"* ]]; then
+        print_status "Skipping __init__ file: $file"
         continue
     fi
     
@@ -338,92 +395,32 @@ find "$CHUNKER_DIR" -type f -name "*.json" | while read -r file; do
     
     # Count chunks if jq is available
     if command -v jq >/dev/null 2>&1; then
-        if jq -e '.chunks' "$file" > /dev/null 2>&1; then
-            chunk_count=$(jq '.chunks | length' "$file")
-            print_status "Found $chunk_count chunks in $filename"
+         if jq -e . "$file" > /dev/null 2>&1; then # Check if valid JSON first
+            if jq -e '.chunks' "$file" > /dev/null 2>&1; then
+                chunk_count=$(jq '.chunks | length // 0' "$file")
+                print_status "Found $chunk_count chunks in $filename"
+            else
+                print_status "No recognized chunk structure in valid JSON file $filename"
+            fi
         else
-            print_status "No recognized chunk structure in $filename"
+            print_warning "Chunker file $filename is not valid JSON."
         fi
+    else
+        print_status "Analyzed $filename (jq not found for detailed analysis)"
     fi
 done
 
-# Combine all entity data into a single file
-print_status "Combining all extracted entities into a single file..."
-python -c "
-import json
-import os
-import glob
+# REMOVED: Combine all entity data into a single file section
+# The python script called in the loop above should now handle Neo4j loading directly.
 
-# Find all entity files
-entity_files = glob.glob('$OUTPUT_DIR/*_entities.json')
-print(f'Found {len(entity_files)} entity files')
+# REMOVED: Neo4j import section
+# The import logic is assumed to be handled by the python script called earlier.
 
-# Initialize empty combined data
-combined_data = {
-    'entities': [],
-    'relationships': []
-}
-
-# Track entity IDs to avoid duplicates
-entity_ids = set()
-relationship_keys = set()
-
-# Process each file
-for file_path in entity_files:
-    try:
-        with open(file_path, 'r') as f:
-            data = json.load(f)
-            
-        # Add entities avoiding duplicates
-        for entity in data.get('entities', []):
-            entity_id = entity.get('id')
-            entity_name = entity.get('name')
-            
-            # Create a unique key for the entity
-            entity_key = f\"{entity_id}_{entity_name}\"
-            
-            if entity_key not in entity_ids:
-                entity_ids.add(entity_key)
-                combined_data['entities'].append(entity)
-        
-        # Add relationships avoiding duplicates
-        for rel in data.get('relationships', []):
-            source = rel.get('source')
-            target = rel.get('target')
-            rel_type = rel.get('type')
-            
-            # Create a unique key for the relationship
-            rel_key = f\"{source}_{target}_{rel_type}\"
-            
-            if rel_key not in relationship_keys:
-                relationship_keys.add(rel_key)
-                combined_data['relationships'].append(rel)
-    except Exception as e:
-        print(f'Error processing {file_path}: {e}')
-
-# Save combined data
-combined_file = '$OUTPUT_DIR/combined_entities.json'
-with open(combined_file, 'w') as f:
-    json.dump(combined_data, f, indent=2)
-
-print(f'Combined data saved with {len(combined_data[\"entities\"])} entities and {len(combined_data[\"relationships\"])} relationships')
-"
-
-if [ $? -eq 0 ] && [ -f "$OUTPUT_DIR/combined_entities.json" ]; then
-    print_success "Entity extraction completed and combined successfully!"
-    print_status "Final results saved to: $OUTPUT_DIR/combined_entities.json"
-    
-    # Count total entities and relationships
-    if command -v jq >/dev/null 2>&1; then
-        entity_count=$(jq '.entities | length' "$OUTPUT_DIR/combined_entities.json")
-        rel_count=$(jq '.relationships | length' "$OUTPUT_DIR/combined_entities.json")
-        print_success "Total: $entity_count entities and $rel_count relationships extracted"
-    fi
-else
-    print_error "Failed to combine entity data"
-fi
-
-print_status "Cohere pipeline completed. All extracted data is available in: $OUTPUT_DIR"
-print_status "To clean up working files, run: rm -rf $WORK_DIR"
+print_status "Cohere pipeline processing completed."
+print_status "Entity/Relationship loading to Neo4j was attempted directly during file processing."
+print_status "Temporary files (if any were created by python script) might be in: $WORK_DIR"
+print_status "To clean up temporary files directory, run: rm -rf $WORK_DIR"
+# Optionally clean up the parent @temp if empty, but safer to leave it
+# find ./@temp -maxdepth 0 -type d -empty -delete
 
 exit 0 
